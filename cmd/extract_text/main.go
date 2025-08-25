@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 	
-	"github.com/allieus/pdfplumber-go"
+	"github.com/pyhub-apps/pdfplumber-golang"
 )
 
 func main() {

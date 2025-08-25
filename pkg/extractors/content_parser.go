@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/allieus/pdfplumber-go/pkg/pdf"
+	"github.com/pyhub-apps/pdfplumber-golang/pkg/pdf"
 	gopdf "github.com/dslipak/pdf"
 )
 

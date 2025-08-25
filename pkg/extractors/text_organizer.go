@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/allieus/pdfplumber-go/pkg/pdf"
+	"github.com/pyhub-apps/pdfplumber-golang/pkg/pdf"
 )
 
 // TextOrganizer organizes text objects into lines and words

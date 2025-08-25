@@ -4,7 +4,7 @@
 
 ### Completed Components:
 1. **Project Structure**
-   - Go module initialized with `github.com/allieus/pdfplumber-go`
+   - Go module initialized with `github.com/pyhub-apps/pdfplumber-golang`
    - Organized package structure (`pkg/pdf`, `pkg/page`, `pkg/objects`, etc.)
    - `.gitignore` configured for Go projects
    - README.md with project overview and API documentation

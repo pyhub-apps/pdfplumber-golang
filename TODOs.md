@@ -6,7 +6,7 @@ Porting pdfplumber Python library to Go, providing detailed PDF parsing and extr
 ## Phase 1: Project Foundation & Core Architecture ✅
 
 ### 1.1 Project Setup
-- [x] Initialize Go module (go mod init github.com/allieus/pdfplumber-go)
+- [x] Initialize Go module (go mod init github.com/pyhub-apps/pdfplumber-golang)
 - [x] Create project directory structure
   - [x] `/pkg/pdf` - Core PDF handling
   - [x] `/pkg/page` - Page operations
@@ -163,7 +163,7 @@ Porting pdfplumber Python library to Go, providing detailed PDF parsing and extr
 - ✅ Researched Go PDF libraries (pdfcpu, unipdf)
 - ✅ Created comprehensive implementation plan
 - ✅ Set up TODOs.md with detailed tasks
-- ✅ Initialized Go module with github.com/allieus/pdfplumber-go
+- ✅ Initialized Go module with github.com/pyhub-apps/pdfplumber-golang
 - ✅ Created project directory structure
 - ✅ Added pdfcpu dependency
 - ✅ Created .gitignore file

@@ -2,7 +2,7 @@
 package pdfplumber
 
 import (
-	"github.com/allieus/pdfplumber-go/pkg/pdf"
+	"github.com/pyhub-apps/pdfplumber-golang/pkg/pdf"
 )
 
 // Re-export types from pdf package for public API

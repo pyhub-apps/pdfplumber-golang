@@ -1,4 +1,4 @@
-module github.com/allieus/pdfplumber-go
+module github.com/pyhub-apps/pdfplumber-golang
 
 go 1.24.4
 

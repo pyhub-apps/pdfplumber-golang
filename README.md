@@ -25,7 +25,7 @@ This library is built on top of [pdfcpu](https://github.com/pdfcpu/pdfcpu) and a
 ## Installation
 
 ```bash
-go get github.com/allieus/pdfplumber-go
+go get github.com/pyhub-apps/pdfplumber-golang
 ```
 
 ## Quick Start
@@ -37,7 +37,7 @@ import (
     "fmt"
     "log"
     
-    "github.com/allieus/pdfplumber-go"
+    "github.com/pyhub-apps/pdfplumber-golang"
 )
 
 func main() {

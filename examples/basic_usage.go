@@ -5,9 +5,9 @@ import (
 
 	// These imports will be used once full implementation is complete
 	// "log"
-	// "github.com/allieus/pdfplumber-go"
+	// "github.com/pyhub-apps/pdfplumber-golang"
 	
-	"github.com/allieus/pdfplumber-go/pkg/pdf"
+	"github.com/pyhub-apps/pdfplumber-golang/pkg/pdf"
 )
 
 func main() {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/allieus/pdfplumber-go/pkg/pdf"
+	"github.com/pyhub-apps/pdfplumber-golang/pkg/pdf"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 

@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/allieus/pdfplumber-go"
-	"github.com/allieus/pdfplumber-go/pkg/pdf"
+	"github.com/pyhub-apps/pdfplumber-golang"
+	"github.com/pyhub-apps/pdfplumber-golang/pkg/pdf"
 )
 
 func main() {
