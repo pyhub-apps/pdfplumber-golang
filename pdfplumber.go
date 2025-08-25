@@ -5,6 +5,33 @@ import (
 	"github.com/allieus/pdfplumber-go/pkg/pdf"
 )
 
+// Re-export types from pdf package for public API
+type (
+	Document               = pdf.Document
+	Page                  = pdf.Page
+	Table                 = pdf.Table
+	TableExtractionOption = pdf.TableExtractionOption
+	TextExtractionOption  = pdf.TextExtractionOption
+	WordExtractionOption  = pdf.WordExtractionOption
+	Word                  = pdf.Word
+	Objects               = pdf.Objects
+	CharObject            = pdf.CharObject
+	LineObject            = pdf.LineObject
+	RectObject            = pdf.RectObject
+	CurveObject           = pdf.CurveObject
+	BoundingBox           = pdf.BoundingBox
+)
+
+// Re-export option functions
+var (
+	WithTableStrategy = pdf.WithTableStrategy
+	WithMinTableSize  = pdf.WithMinTableSize
+	WithTextTolerance = pdf.WithTextTolerance
+	WithLayout        = pdf.WithLayout
+	WithXTolerance    = pdf.WithXTolerance
+	WithYTolerance    = pdf.WithYTolerance
+)
+
 // Open opens a PDF file and returns a Document
 func Open(filepath string) (pdf.Document, error) {
 	// Try ledongthuc implementation first as it has the most accurate text extraction

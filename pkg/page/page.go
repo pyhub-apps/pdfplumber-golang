@@ -125,6 +125,12 @@ func (p *PDFPage) ExtractText(opts ...pdf.TextExtractionOption) string {
 	return result
 }
 
+// ExtractWords extracts individual words from the page
+func (p *PDFPage) ExtractWords(opts ...pdf.WordExtractionOption) []pdf.Word {
+	// TODO: Implement word extraction
+	return []pdf.Word{}
+}
+
 // ExtractTables extracts tables from the page
 func (p *PDFPage) ExtractTables(opts ...pdf.TableExtractionOption) []pdf.Table {
 	// TODO: Implement table extraction

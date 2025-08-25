@@ -297,8 +297,8 @@ func (p *PDFCPUPage) ExtractWords(opts ...WordExtractionOption) []Word {
 
 // ExtractTables extracts tables from the page
 func (p *PDFCPUPage) ExtractTables(opts ...TableExtractionOption) []Table {
-	// TODO: Implement table extraction
-	return []Table{}
+	extractor := newTableExtractor(p, opts...)
+	return extractor.ExtractTables()
 }
 
 // Crop returns a new page cropped to the specified bounding box

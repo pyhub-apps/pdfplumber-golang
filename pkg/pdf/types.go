@@ -368,6 +368,28 @@ type tableExtractionConfig struct {
 	TextTolerance      float64
 }
 
+// WithTableStrategy sets the table detection strategy
+func WithTableStrategy(vertical, horizontal string) TableExtractionOption {
+	return func(c *tableExtractionConfig) {
+		c.VerticalStrategy = vertical
+		c.HorizontalStrategy = horizontal
+	}
+}
+
+// WithMinTableSize sets the minimum number of rows for a valid table
+func WithMinTableSize(size int) TableExtractionOption {
+	return func(c *tableExtractionConfig) {
+		c.MinTableSize = size
+	}
+}
+
+// WithTextTolerance sets the tolerance for text alignment in tables
+func WithTextTolerance(tolerance float64) TableExtractionOption {
+	return func(c *tableExtractionConfig) {
+		c.TextTolerance = tolerance
+	}
+}
+
 // ImageOption is a function that modifies image rendering behavior
 type ImageOption func(*imageConfig)
 

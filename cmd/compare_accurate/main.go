@@ -17,7 +17,7 @@ func main() {
 	
 	pdfPath := os.Args[1]
 	
-	fmt.Println("=== Go pdfplumber-go (ledongthuc) vs Python pdfplumber ===\n")
+	fmt.Println("=== Go pdfplumber-go (ledongthuc) vs Python pdfplumber ===")
 	
 	// Open with our implementation
 	doc, err := pdfplumber.OpenWithLedongthuc(pdfPath)
