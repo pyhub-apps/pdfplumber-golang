@@ -187,7 +187,7 @@ func (p *DsliPakPage) extractTextObjects(content gopdf.Content) {
 				Y1:       y + fontHeight,
 				Width:    charWidth,
 				Height:   fontHeight,
-				Color:    Color{R: 0, G: 0, B: 0, A: 255},
+				Color:    Color{R: 0, G: 0, B: 0, A: 255}, // Default black color
 			}
 			
 			p.objects.Chars = append(p.objects.Chars, char)

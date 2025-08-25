@@ -92,9 +92,11 @@ func (d *PDFDocument) initializePages() error {
 	d.pages = make([]Page, pageCount)
 
 	for i := 1; i <= pageCount; i++ {
-		// TODO: Create page using the page package
-		// For now, we'll need to implement a factory function
-		d.pages[i-1] = nil
+		page, err := NewPDFCPUPage(d.ctx, i)
+		if err != nil {
+			return fmt.Errorf("failed to create page %d: %w", i, err)
+		}
+		d.pages[i-1] = page
 	}
 
 	return nil
