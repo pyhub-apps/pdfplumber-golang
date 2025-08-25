@@ -57,8 +57,7 @@ func NewPDFPage(ctx *model.Context, pageNumber int) (pdf.Page, error) {
 
 // extractObjects extracts all objects from the page
 func (p *PDFPage) extractObjects() error {
-	// This is a placeholder - actual implementation would parse PDF content streams
-	// using pdfcpu's content stream parser
+	// Initialize empty objects
 	p.objects = pdf.Objects{
 		Chars:  []pdf.CharObject{},
 		Lines:  []pdf.LineObject{},
@@ -68,11 +67,13 @@ func (p *PDFPage) extractObjects() error {
 		Annos:  []pdf.AnnotationObject{},
 	}
 	
-	// TODO: Implement actual object extraction using pdfcpu
-	// This would involve:
-	// 1. Getting the page's content stream
-	// 2. Parsing the content stream for graphics operations
-	// 3. Converting graphics operations to our object types
+	// TODO: Implement actual object extraction
+	// This requires integrating with content stream parser
+	// For now, we'll leave this as a placeholder
+	// The actual implementation would:
+	// 1. Get the page's content stream from pdfcpu context
+	// 2. Parse the content stream for text and graphics operations
+	// 3. Convert operations to our object types
 	
 	return nil
 }

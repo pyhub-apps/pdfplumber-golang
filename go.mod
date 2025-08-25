@@ -5,6 +5,7 @@ go 1.24.4
 require github.com/pdfcpu/pdfcpu v0.11.0
 
 require (
+	github.com/dslipak/pdf v0.0.2 // indirect
 	github.com/hhrutter/lzw v1.0.0 // indirect
 	github.com/hhrutter/pkcs7 v0.2.0 // indirect
 	github.com/hhrutter/tiff v1.0.2 // indirect
