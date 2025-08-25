@@ -36,3 +36,6 @@ Thumbs.db
 /dist/
 *.pdf
 !testdata/*.pdf
+
+# Claude AI settings
+.claude/

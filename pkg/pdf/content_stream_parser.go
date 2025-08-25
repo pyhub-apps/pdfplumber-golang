@@ -97,9 +97,11 @@ func NewContentStreamParser(ctx *model.Context, pageDict types.Dict) *ContentStr
 		pageDict: pageDict,
 		objects:  Objects{},
 		graphicsState: &GraphicsState{
-			CTM:        IdentityMatrix(),
-			LineWidth:  1.0,
-			MiterLimit: 10.0,
+			CTM:         IdentityMatrix(),
+			LineWidth:   1.0,
+			MiterLimit:  10.0,
+			StrokeColor: PDFColor{R: 0, G: 0, B: 0, ColorSpace: "Gray"}, // Default black
+			FillColor:   PDFColor{R: 0, G: 0, B: 0, ColorSpace: "Gray"}, // Default black
 		},
 		textState: &TextState{
 			FontSize:   12,
@@ -182,20 +184,20 @@ func (p *ContentStreamParser) Parse(content []byte) Objects {
 	tokens := p.tokenize(content)
 	
 	// Process tokens
+	operands := []string{}
 	for i := 0; i < len(tokens); i++ {
 		token := tokens[i]
 		
 		// Check if it's an operator
 		if p.isOperator(token) {
-			// Get operands (all tokens before the operator)
-			operands := p.getOperands(tokens, i)
-			
-			// Process the operator
+			// Process the operator with accumulated operands
 			p.processOperator(token, operands)
 			
-			// Clear operands from token list
-			tokens = tokens[i+1:]
-			i = -1 // Reset counter
+			// Clear operands for next operator
+			operands = []string{}
+		} else {
+			// Accumulate operands
+			operands = append(operands, token)
 		}
 	}
 	
@@ -418,14 +420,6 @@ func (p *ContentStreamParser) isOperator(token string) bool {
 	return false
 }
 
-// getOperands extracts operands before an operator
-func (p *ContentStreamParser) getOperands(tokens []string, operatorIndex int) []string {
-	if operatorIndex == 0 {
-		return []string{}
-	}
-	
-	return tokens[:operatorIndex]
-}
 
 // processOperator processes a PDF operator with its operands
 func (p *ContentStreamParser) processOperator(operator string, operands []string) {
@@ -506,9 +500,39 @@ func (p *ContentStreamParser) processOperator(operator string, operands []string
 	case "n":
 		p.endPath()
 		
-	// Line width
+	// Line width and style
 	case "w":
 		p.setLineWidth(operands)
+	case "J":
+		p.setLineCap(operands)
+	case "j":
+		p.setLineJoin(operands)
+	case "M":
+		p.setMiterLimit(operands)
+	case "d":
+		p.setDashPattern(operands)
+		
+	// Color operators
+	case "RG":
+		p.setStrokeColorRGB(operands)
+	case "rg":
+		p.setFillColorRGB(operands)
+	case "G":
+		p.setStrokeColorGray(operands)
+	case "g":
+		p.setFillColorGray(operands)
+	case "K":
+		p.setStrokeColorCMYK(operands)
+	case "k":
+		p.setFillColorCMYK(operands)
+	case "CS":
+		p.setStrokeColorSpace(operands)
+	case "cs":
+		p.setFillColorSpace(operands)
+	case "SC", "SCN":
+		p.setStrokeColor(operands)
+	case "sc", "scn":
+		p.setFillColor(operands)
 	}
 }
 
@@ -808,16 +832,15 @@ func (p *ContentStreamParser) rectangle(operands []string) {
 	width := parseFloat(operands[2])
 	height := parseFloat(operands[3])
 	
-	// Add rectangle to objects
-	rect := RectObject{
-		X0:    x,
-		Y0:    y,
-		X1:    x + width,
-		Y1:    y + height,
-		Width: p.graphicsState.LineWidth,
-	}
-	
-	p.objects.Rects = append(p.objects.Rects, rect)
+	// Add rectangle path for later stroke/fill
+	// Convert rectangle to path
+	p.currentPath = append(p.currentPath, 
+		PathElement{Type: "moveto", Points: []PDFPoint{{X: x, Y: y}}},
+		PathElement{Type: "lineto", Points: []PDFPoint{{X: x + width, Y: y}}},
+		PathElement{Type: "lineto", Points: []PDFPoint{{X: x + width, Y: y + height}}},
+		PathElement{Type: "lineto", Points: []PDFPoint{{X: x, Y: y + height}}},
+		PathElement{Type: "close"},
+	)
 }
 
 // Path painting operators
@@ -828,13 +851,86 @@ func (p *ContentStreamParser) stroke() {
 }
 
 func (p *ContentStreamParser) fill() {
-	// TODO: Handle filled paths
+	p.createFilledPath()
 	p.currentPath = nil
 }
 
 func (p *ContentStreamParser) fillAndStroke() {
+	// First create filled object, then stroked lines
+	p.createFilledPath()
 	p.createLineFromPath()
 	p.currentPath = nil
+}
+
+// createFilledPath creates filled rectangles or shapes from the current path
+func (p *ContentStreamParser) createFilledPath() {
+	if len(p.currentPath) < 3 {
+		return
+	}
+	
+	// Check if path forms a rectangle
+	if p.isRectanglePath() {
+		// Extract rectangle bounds
+		minX, minY, maxX, maxY := p.getPathBounds()
+		
+		// Apply transformation
+		x0, y0 := p.transformPoint(minX, minY)
+		x1, y1 := p.transformPoint(maxX, maxY)
+		
+		fillColor := p.convertPDFColorToColor(p.graphicsState.FillColor)
+		
+		rect := RectObject{
+			X0:          min(x0, x1),
+			Y0:          min(y0, y1),
+			X1:          max(x0, x1),
+			Y1:          max(y0, y1),
+			Width:       0, // Filled rectangle has no stroke width
+			FillColor:   fillColor,
+			NonStroking: true, // This is a filled (non-stroking) rectangle
+		}
+		
+		p.objects.Rects = append(p.objects.Rects, rect)
+	}
+	// For complex paths, we could create a more general filled shape object
+}
+
+// isRectanglePath checks if the current path forms a rectangle
+func (p *ContentStreamParser) isRectanglePath() bool {
+	// Simple heuristic: 4 lines with close
+	lineCount := 0
+	hasClose := false
+	
+	for _, elem := range p.currentPath {
+		if elem.Type == "lineto" {
+			lineCount++
+		} else if elem.Type == "close" {
+			hasClose = true
+		}
+	}
+	
+	return lineCount == 3 && hasClose // 3 lineto + 1 implicit line from close
+}
+
+// getPathBounds returns the bounding box of the current path
+func (p *ContentStreamParser) getPathBounds() (minX, minY, maxX, maxY float64) {
+	first := true
+	
+	for _, elem := range p.currentPath {
+		for _, pt := range elem.Points {
+			if first {
+				minX, maxX = pt.X, pt.X
+				minY, maxY = pt.Y, pt.Y
+				first = false
+			} else {
+				minX = min(minX, pt.X)
+				maxX = max(maxX, pt.X)
+				minY = min(minY, pt.Y)
+				maxY = max(maxY, pt.Y)
+			}
+		}
+	}
+	
+	return
 }
 
 func (p *ContentStreamParser) endPath() {
@@ -846,6 +942,155 @@ func (p *ContentStreamParser) setLineWidth(operands []string) {
 		return
 	}
 	p.graphicsState.LineWidth = parseFloat(operands[0])
+}
+
+func (p *ContentStreamParser) setLineCap(operands []string) {
+	if len(operands) < 1 {
+		return
+	}
+	p.graphicsState.LineCap = parseInt(operands[0])
+}
+
+func (p *ContentStreamParser) setLineJoin(operands []string) {
+	if len(operands) < 1 {
+		return
+	}
+	p.graphicsState.LineJoin = parseInt(operands[0])
+}
+
+func (p *ContentStreamParser) setMiterLimit(operands []string) {
+	if len(operands) < 1 {
+		return
+	}
+	p.graphicsState.MiterLimit = parseFloat(operands[0])
+}
+
+func (p *ContentStreamParser) setDashPattern(operands []string) {
+	// Format: [array] phase d
+	// For now, just store whether dashed or not
+	if len(operands) >= 2 {
+		// Parse array and phase
+		// Simplified: just check if we have a dash pattern
+		p.graphicsState.DashPattern = []float64{1} // Placeholder
+	}
+}
+
+// Color operators
+
+func (p *ContentStreamParser) setStrokeColorRGB(operands []string) {
+	if len(operands) < 3 {
+		return
+	}
+	p.graphicsState.StrokeColor = PDFColor{
+		R:          parseFloat(operands[0]),
+		G:          parseFloat(operands[1]),
+		B:          parseFloat(operands[2]),
+		ColorSpace: "RGB",
+	}
+}
+
+func (p *ContentStreamParser) setFillColorRGB(operands []string) {
+	if len(operands) < 3 {
+		return
+	}
+	p.graphicsState.FillColor = PDFColor{
+		R:          parseFloat(operands[0]),
+		G:          parseFloat(operands[1]),
+		B:          parseFloat(operands[2]),
+		ColorSpace: "RGB",
+	}
+}
+
+func (p *ContentStreamParser) setStrokeColorGray(operands []string) {
+	if len(operands) < 1 {
+		return
+	}
+	gray := parseFloat(operands[0])
+	p.graphicsState.StrokeColor = PDFColor{
+		R:          gray,
+		G:          gray,
+		B:          gray,
+		ColorSpace: "Gray",
+	}
+}
+
+func (p *ContentStreamParser) setFillColorGray(operands []string) {
+	if len(operands) < 1 {
+		return
+	}
+	gray := parseFloat(operands[0])
+	p.graphicsState.FillColor = PDFColor{
+		R:          gray,
+		G:          gray,
+		B:          gray,
+		ColorSpace: "Gray",
+	}
+}
+
+func (p *ContentStreamParser) setStrokeColorCMYK(operands []string) {
+	if len(operands) < 4 {
+		return
+	}
+	// Convert CMYK to RGB (simplified)
+	c := parseFloat(operands[0])
+	m := parseFloat(operands[1])
+	y := parseFloat(operands[2])
+	k := parseFloat(operands[3])
+	
+	p.graphicsState.StrokeColor = PDFColor{
+		R:          (1 - c) * (1 - k),
+		G:          (1 - m) * (1 - k),
+		B:          (1 - y) * (1 - k),
+		ColorSpace: "CMYK",
+	}
+}
+
+func (p *ContentStreamParser) setFillColorCMYK(operands []string) {
+	if len(operands) < 4 {
+		return
+	}
+	// Convert CMYK to RGB (simplified)
+	c := parseFloat(operands[0])
+	m := parseFloat(operands[1])
+	y := parseFloat(operands[2])
+	k := parseFloat(operands[3])
+	
+	p.graphicsState.FillColor = PDFColor{
+		R:          (1 - c) * (1 - k),
+		G:          (1 - m) * (1 - k),
+		B:          (1 - y) * (1 - k),
+		ColorSpace: "CMYK",
+	}
+}
+
+func (p *ContentStreamParser) setStrokeColorSpace(operands []string) {
+	// Store color space name for later use
+	// For now, simplified implementation
+}
+
+func (p *ContentStreamParser) setFillColorSpace(operands []string) {
+	// Store color space name for later use
+	// For now, simplified implementation
+}
+
+func (p *ContentStreamParser) setStrokeColor(operands []string) {
+	// Generic color setting based on current color space
+	// Simplified: treat as grayscale or RGB
+	if len(operands) == 1 {
+		p.setStrokeColorGray(operands)
+	} else if len(operands) >= 3 {
+		p.setStrokeColorRGB(operands)
+	}
+}
+
+func (p *ContentStreamParser) setFillColor(operands []string) {
+	// Generic color setting based on current color space
+	// Simplified: treat as grayscale or RGB
+	if len(operands) == 1 {
+		p.setFillColorGray(operands)
+	} else if len(operands) >= 3 {
+		p.setFillColorRGB(operands)
+	}
 }
 
 // Helper functions
@@ -885,22 +1130,117 @@ func (p *ContentStreamParser) createLineFromPath() {
 		return
 	}
 	
-	// Create line objects from path
-	for i := 0; i < len(p.currentPath)-1; i++ {
-		if p.currentPath[i].Type == "moveto" && i+1 < len(p.currentPath) && p.currentPath[i+1].Type == "lineto" {
-			start := p.currentPath[i].Points[0]
-			end := p.currentPath[i+1].Points[0]
-			
-			line := LineObject{
-				X0:    start.X,
-				Y0:    start.Y,
-				X1:    end.X,
-				Y1:    end.Y,
-				Width: p.graphicsState.LineWidth,
+	// Convert stroke color to Color type for LineObject
+	strokeColor := p.convertPDFColorToColor(p.graphicsState.StrokeColor)
+	
+	// Track current position
+	var currentX, currentY float64
+	var pathStartX, pathStartY float64
+	
+	for i := 0; i < len(p.currentPath); i++ {
+		elem := p.currentPath[i]
+		
+		switch elem.Type {
+		case "moveto":
+			if len(elem.Points) > 0 {
+				currentX = elem.Points[0].X
+				currentY = elem.Points[0].Y
+				pathStartX = currentX
+				pathStartY = currentY
 			}
 			
-			p.objects.Lines = append(p.objects.Lines, line)
+		case "lineto":
+			if len(elem.Points) > 0 {
+				endX := elem.Points[0].X
+				endY := elem.Points[0].Y
+				
+				// Apply CTM transformation
+				startX, startY := p.transformPoint(currentX, currentY)
+				endXTransformed, endYTransformed := p.transformPoint(endX, endY)
+				
+				line := LineObject{
+					X0:          startX,
+					Y0:          startY,
+					X1:          endXTransformed,
+					Y1:          endYTransformed,
+					Width:       p.graphicsState.LineWidth,
+					StrokeColor: strokeColor,
+				}
+				
+				p.objects.Lines = append(p.objects.Lines, line)
+				
+				currentX = endX
+				currentY = endY
+			}
+			
+		case "close":
+			// Draw line back to path start
+			if currentX != pathStartX || currentY != pathStartY {
+				startX, startY := p.transformPoint(currentX, currentY)
+				endX, endY := p.transformPoint(pathStartX, pathStartY)
+				
+				line := LineObject{
+					X0:          startX,
+					Y0:          startY,
+					X1:          endX,
+					Y1:          endY,
+					Width:       p.graphicsState.LineWidth,
+					StrokeColor: strokeColor,
+				}
+				
+				p.objects.Lines = append(p.objects.Lines, line)
+			}
+			
+		case "curveto":
+			// For now, approximate curves as lines (could be improved)
+			if len(elem.Points) >= 3 {
+				// Use the end point of the curve
+				endX := elem.Points[2].X
+				endY := elem.Points[2].Y
+				
+				startX, startY := p.transformPoint(currentX, currentY)
+				endXTransformed, endYTransformed := p.transformPoint(endX, endY)
+				
+				// Create a curve object instead of line
+				cp1X, cp1Y := p.transformPoint(elem.Points[0].X, elem.Points[0].Y)
+				cp2X, cp2Y := p.transformPoint(elem.Points[1].X, elem.Points[1].Y)
+				
+				curve := CurveObject{
+					Points: []Point{
+						{X: startX, Y: startY},
+						{X: cp1X, Y: cp1Y},
+						{X: cp2X, Y: cp2Y},
+						{X: endXTransformed, Y: endYTransformed},
+					},
+					StrokeColor: strokeColor,
+					Width:       p.graphicsState.LineWidth,
+				}
+				
+				p.objects.Curves = append(p.objects.Curves, curve)
+				
+				currentX = endX
+				currentY = endY
+			}
 		}
+	}
+}
+
+// transformPoint applies the current transformation matrix to a point
+func (p *ContentStreamParser) transformPoint(x, y float64) (float64, float64) {
+	ctm := p.graphicsState.CTM
+	newX := ctm.A*x + ctm.C*y + ctm.E
+	newY := ctm.B*x + ctm.D*y + ctm.F
+	return newX, newY
+}
+
+// convertPDFColorToColor converts PDFColor to Color type
+func (p *ContentStreamParser) convertPDFColorToColor(pdfColor PDFColor) Color {
+	// Convert float RGB values (0-1) to uint8 (0-255)
+	return Color{
+		R: uint8(pdfColor.R * 255),
+		G: uint8(pdfColor.G * 255),
+		B: uint8(pdfColor.B * 255),
+		A: 255, // Full opacity
 	}
 }
 
