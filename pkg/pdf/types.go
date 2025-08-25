@@ -295,6 +295,16 @@ type Table struct {
 	BBox BoundingBox
 }
 
+// Word represents a word extracted from PDF
+type Word struct {
+	Text       string          // The word text
+	X0         float64         // Left boundary
+	Y0         float64         // Top boundary
+	X1         float64         // Right boundary
+	Y1         float64         // Bottom boundary
+	Characters []CharObject    // Characters that make up this word
+}
+
 // TextExtractionOption is a function that modifies text extraction behavior
 type TextExtractionOption func(*textExtractionConfig)
 
@@ -322,6 +332,28 @@ func WithXTolerance(tolerance float64) TextExtractionOption {
 // WithYTolerance sets the vertical tolerance for text grouping
 func WithYTolerance(tolerance float64) TextExtractionOption {
 	return func(c *textExtractionConfig) {
+		c.YTolerance = tolerance
+	}
+}
+
+// WordExtractionOption is a function that modifies word extraction behavior
+type WordExtractionOption func(*wordExtractionConfig)
+
+type wordExtractionConfig struct {
+	XTolerance float64 // Horizontal tolerance for word separation (default: 3.0)
+	YTolerance float64 // Vertical tolerance for line separation (default: 3.0)
+}
+
+// WithWordXTolerance sets the horizontal tolerance for word separation
+func WithWordXTolerance(tolerance float64) WordExtractionOption {
+	return func(c *wordExtractionConfig) {
+		c.XTolerance = tolerance
+	}
+}
+
+// WithWordYTolerance sets the vertical tolerance for line separation
+func WithWordYTolerance(tolerance float64) WordExtractionOption {
+	return func(c *wordExtractionConfig) {
 		c.YTolerance = tolerance
 	}
 }
@@ -357,4 +389,11 @@ func max(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }

@@ -3,6 +3,7 @@ package pdf
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	lpdf "github.com/ledongthuc/pdf"
@@ -205,20 +206,23 @@ func (p *LedongthucPage) extractTextObjects(content lpdf.Content) {
 		x := text.X
 		
 		for _, ch := range chars {
-			char := CharObject{
-				Text:     string(ch),
-				Font:     text.Font,
-				FontSize: 16.1, // Match Python output
-				X0:       x,
-				Y0:       y0_plumber,
-				X1:       x + charWidth,
-				Y1:       y0_plumber + fontHeight,
-				Width:    charWidth,
-				Height:   fontHeight,
-				Color:    Color{R: 0, G: 0, B: 0, A: 255},
+			// Skip space characters as they're used for word separation
+			if ch != ' ' {
+				char := CharObject{
+					Text:     string(ch),
+					Font:     text.Font,
+					FontSize: 16.1, // Match Python output
+					X0:       x,
+					Y0:       y0_plumber,
+					X1:       x + charWidth,
+					Y1:       y0_plumber + fontHeight,
+					Width:    charWidth,
+					Height:   fontHeight,
+					Color:    Color{R: 0, G: 0, B: 0, A: 255},
+				}
+				
+				p.objects.Chars = append(p.objects.Chars, char)
 			}
-			
-			p.objects.Chars = append(p.objects.Chars, char)
 			x += charWidth
 		}
 	}
@@ -341,6 +345,132 @@ func (p *LedongthucPage) Filter(predicate func(Object) bool) Objects {
 	
 	return filtered
 }
+
+// ExtractWords extracts individual words from the page
+func (p *LedongthucPage) ExtractWords(opts ...WordExtractionOption) []Word {
+	// Apply options
+	config := &wordExtractionConfig{
+		XTolerance: 3.0,
+		YTolerance: 3.0,
+	}
+	for _, opt := range opts {
+		opt(config)
+	}
+	
+	if len(p.objects.Chars) == 0 {
+		return nil
+	}
+	
+	// Sort characters by position (top to bottom, left to right)
+	sortedChars := make([]CharObject, len(p.objects.Chars))
+	copy(sortedChars, p.objects.Chars)
+	
+	sort.Slice(sortedChars, func(i, j int) bool {
+		// First sort by Y position (top to bottom)
+		if abs(sortedChars[i].Y0-sortedChars[j].Y0) > config.YTolerance {
+			return sortedChars[i].Y0 < sortedChars[j].Y0
+		}
+		// Then sort by X position (left to right)
+		return sortedChars[i].X0 < sortedChars[j].X0
+	})
+	
+	// Group characters into lines
+	var lines [][]CharObject
+	var currentLine []CharObject
+	currentY := sortedChars[0].Y0
+	
+	for _, char := range sortedChars {
+		// Check if this character is on a new line
+		if abs(char.Y0-currentY) > config.YTolerance {
+			if len(currentLine) > 0 {
+				lines = append(lines, currentLine)
+			}
+			currentLine = []CharObject{char}
+			currentY = char.Y0
+		} else {
+			currentLine = append(currentLine, char)
+		}
+	}
+	
+	// Add the last line
+	if len(currentLine) > 0 {
+		lines = append(lines, currentLine)
+	}
+	
+	// Extract words from each line
+	var words []Word
+	for _, line := range lines {
+		lineWords := p.extractWordsFromLine(line, config.XTolerance)
+		words = append(words, lineWords...)
+	}
+	
+	return words
+}
+
+// extractWordsFromLine extracts words from a single line of characters
+func (p *LedongthucPage) extractWordsFromLine(lineChars []CharObject, xTolerance float64) []Word {
+	if len(lineChars) == 0 {
+		return nil
+	}
+	
+	// Sort by X position
+	sort.Slice(lineChars, func(i, j int) bool {
+		return lineChars[i].X0 < lineChars[j].X0
+	})
+	
+	var words []Word
+	var currentWord []CharObject
+	
+	for i, char := range lineChars {
+		if i == 0 {
+			currentWord = []CharObject{char}
+		} else {
+			// Check if this character starts a new word
+			gap := char.X0 - lineChars[i-1].X1
+			if gap > xTolerance || gap > char.Width*0.3 {
+				// Save current word and start new one
+				if len(currentWord) > 0 {
+					words = append(words, p.createWord(currentWord))
+				}
+				currentWord = []CharObject{char}
+			} else {
+				currentWord = append(currentWord, char)
+			}
+		}
+	}
+	
+	// Add the last word
+	if len(currentWord) > 0 {
+		words = append(words, p.createWord(currentWord))
+	}
+	
+	return words
+}
+
+// createWord creates a Word from a group of characters
+func (p *LedongthucPage) createWord(chars []CharObject) Word {
+	var text strings.Builder
+	minX, minY := chars[0].X0, chars[0].Y0
+	maxX, maxY := chars[0].X1, chars[0].Y1
+	
+	for _, char := range chars {
+		text.WriteString(char.Text)
+		minX = min(minX, char.X0)
+		minY = min(minY, char.Y0)
+		maxX = max(maxX, char.X1)
+		maxY = max(maxY, char.Y1)
+	}
+	
+	return Word{
+		Text:       text.String(),
+		X0:         minX,
+		Y0:         minY,
+		X1:         maxX,
+		Y1:         maxY,
+		Characters: chars,
+	}
+}
+
 
 // ToImage renders the page to an image (for visual debugging)
 func (p *LedongthucPage) ToImage(opts ...ImageOption) (io.Reader, error) {

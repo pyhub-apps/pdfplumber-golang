@@ -45,6 +45,9 @@ type Page interface {
 	// ExtractText extracts text from the page
 	ExtractText(opts ...TextExtractionOption) string
 	
+	// ExtractWords extracts individual words from the page
+	ExtractWords(opts ...WordExtractionOption) []Word
+	
 	// ExtractTables extracts tables from the page
 	ExtractTables(opts ...TableExtractionOption) []Table
 	
