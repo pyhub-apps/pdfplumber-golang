@@ -185,8 +185,9 @@ func (p *LedongthucPage) extractTextObjects(content lpdf.Content) {
 		// In pdfplumber: Y increases downward from top
 		// text.Y is the baseline position in PDF
 		// We need to calculate the top of the character for pdfplumber
-		// Approximate font height as 16.1 (from Python output)
-		fontHeight := 16.1
+		// Use actual font size from PDF
+		fontSize := text.FontSize
+		fontHeight := fontSize
 		y_baseline_pdf := text.Y
 		y_top_pdf := y_baseline_pdf + fontHeight*0.8 // Baseline is typically at 80% of font height
 		y0_plumber := p.height - y_top_pdf
@@ -211,7 +212,7 @@ func (p *LedongthucPage) extractTextObjects(content lpdf.Content) {
 				char := CharObject{
 					Text:     string(ch),
 					Font:     text.Font,
-					FontSize: 16.1, // Match Python output
+					FontSize: fontSize, // Use actual font size from PDF
 					X0:       x,
 					Y0:       y0_plumber,
 					X1:       x + charWidth,

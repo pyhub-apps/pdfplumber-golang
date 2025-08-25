@@ -166,6 +166,8 @@ func (p *DsliPakPage) extractTextObjects(content gopdf.Content) {
 		// Convert each text item to CharObjects
 		x := text.X
 		y := text.Y
+		fontSize := text.FontSize // Use actual font size from PDF
+		fontHeight := fontSize    // Approximate height as font size
 		
 		for _, ch := range text.S {
 			if ch == ' ' || ch == '\n' || ch == '\r' {
@@ -174,18 +176,17 @@ func (p *DsliPakPage) extractTextObjects(content gopdf.Content) {
 			}
 			
 			charWidth := text.W / float64(len(text.S))
-			charHeight := 12.0 // Default height
 			
 			char := CharObject{
 				Text:     string(ch),
 				Font:     text.Font,
-				FontSize: 12, // Default size
+				FontSize: fontSize, // Use actual font size from PDF
 				X0:       x,
 				Y0:       y,
 				X1:       x + charWidth,
-				Y1:       y + charHeight,
+				Y1:       y + fontHeight,
 				Width:    charWidth,
-				Height:   charHeight,
+				Height:   fontHeight,
 				Color:    Color{R: 0, G: 0, B: 0, A: 255},
 			}
 			
