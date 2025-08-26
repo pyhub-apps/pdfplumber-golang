@@ -66,6 +66,7 @@ type FontInfo struct {
 	IsVertical   bool
 	SpaceWidth   float64
 	FontMatrix   Matrix
+	ToUnicodeCMap *ToUnicodeCMap // Added for proper text decoding
 }
 
 // Matrix represents a 2D transformation matrix
@@ -126,33 +127,75 @@ func NewContentStreamParser(ctx *model.Context, pageDict types.Dict) *ContentStr
 
 // extractFonts extracts font information from resources
 func (p *ContentStreamParser) extractFonts() {
+	// fmt.Println("[DEBUG-FONT] extractFonts called")
 	if p.resources == nil {
+		// fmt.Println("[DEBUG-FONT] No resources")
 		return
 	}
 	
 	fontDict := p.resources["Font"]
 	if fontDict == nil {
+		// fmt.Println("[DEBUG-FONT] No Font in resources")
 		return
 	}
 	
-	fonts, ok := fontDict.(types.Dict)
-	if !ok {
+	// Try to dereference Font dictionary
+	var fonts types.Dict
+	
+	if indRef, ok := fontDict.(types.IndirectRef); ok {
+		// fmt.Println("[DEBUG-FONT] Font is IndirectRef, using DereferenceDict...")
+		dict, err := p.ctx.DereferenceDict(indRef)
+		if err != nil {
+			// fmt.Printf("[DEBUG-FONT] Failed to DereferenceDict: %v\n", err)
+			return
+		}
+		if dict != nil {
+			fonts = dict
+			// fmt.Printf("[DEBUG-FONT] Successfully got font dict with %d entries\n", len(fonts))
+		} else {
+			// fmt.Println("[DEBUG-FONT] DereferenceDict returned nil")
+			return
+		}
+	} else if dict, ok := fontDict.(types.Dict); ok {
+		fonts = dict
+		// fmt.Printf("[DEBUG-FONT] Font is already a Dict with %d entries\n", len(fonts))
+	} else {
+		// fmt.Printf("[DEBUG-FONT] Font is unexpected type: %T\n", fontDict)
 		return
 	}
+	
+	// fmt.Printf("[DEBUG-FONT] Found %d fonts\n", len(fonts))
 	
 	for name, fontRef := range fonts {
+		// fmt.Printf("[DEBUG-FONT] Processing font %s, type: %T\n", name, fontRef)
 		fontObj := fontRef
 		
-		// Dereference if needed
-		if indRef, ok := fontRef.(*types.IndirectRef); ok {
-			dereferenced, err := p.ctx.Dereference(indRef)
+		// Dereference font object
+		if indRef, ok := fontRef.(types.IndirectRef); ok {
+			// fmt.Printf("[DEBUG-FONT] Font %s is IndirectRef, using DereferenceDict...\n", name)
+			dict, err := p.ctx.DereferenceDict(indRef)
 			if err != nil {
+				// fmt.Printf("[DEBUG-FONT] Failed to DereferenceDict font %s: %v\n", name, err)
 				continue
 			}
-			fontObj = dereferenced
+			if dict != nil {
+				fontObj = dict
+			}
+		} else if indRef, ok := fontRef.(*types.IndirectRef); ok {
+			// fmt.Printf("[DEBUG-FONT] Font %s is *IndirectRef, using DereferenceDict...\n", name)
+			dict, err := p.ctx.DereferenceDict(*indRef)
+			if err != nil {
+				// fmt.Printf("[DEBUG-FONT] Failed to DereferenceDict font %s: %v\n", name, err)
+				continue
+			}
+			if dict != nil {
+				fontObj = dict
+			}
 		}
 		
+		// fmt.Printf("[DEBUG-FONT] After dereference, font %s type: %T\n", name, fontObj)
 		if fontDict, ok := fontObj.(types.Dict); ok {
+			// fmt.Printf("[DEBUG-FONT] Font %s is a Dict\n", name)
 			fontInfo := &FontInfo{
 				Name:       name,
 				FontMatrix: Matrix{A: 0.001, B: 0, C: 0, D: 0.001, E: 0, F: 0}, // Default
@@ -173,7 +216,45 @@ func (p *ContentStreamParser) extractFonts() {
 				}
 			}
 			
+			// Extract ToUnicode CMap
+			if toUnicode := fontDict["ToUnicode"]; toUnicode != nil {
+				// fmt.Printf("[DEBUG-FONT] Font %s has ToUnicode, type: %T\n", name, toUnicode)
+				
+				// Try to dereference ToUnicode stream
+				var cmapData []byte
+				
+				if indRef, ok := toUnicode.(types.IndirectRef); ok {
+					streamDict, _, err := p.ctx.DereferenceStreamDict(indRef)
+					if err == nil && streamDict != nil {
+						if err := streamDict.Decode(); err == nil {
+							cmapData = streamDict.Content
+							// fmt.Printf("[DEBUG-FONT] Got ToUnicode CMap data for %s: %d bytes\n", name, len(cmapData))
+						}
+					}
+				} else if indRef, ok := toUnicode.(*types.IndirectRef); ok {
+					streamDict, _, err := p.ctx.DereferenceStreamDict(*indRef)
+					if err == nil && streamDict != nil {
+						if err := streamDict.Decode(); err == nil {
+							cmapData = streamDict.Content
+							// fmt.Printf("[DEBUG-FONT] Got ToUnicode CMap data for %s: %d bytes\n", name, len(cmapData))
+						}
+					}
+				}
+				
+				// Parse CMap if we got data
+				if len(cmapData) > 0 {
+					cmap := NewToUnicodeCMap()
+					if err := cmap.Parse(cmapData); err == nil {
+						fontInfo.ToUnicodeCMap = cmap
+						// fmt.Printf("[DEBUG-FONT] Successfully parsed CMap for %s: %d mappings\n", name, cmap.GetMappingCount())
+					} else {
+						// fmt.Printf("[DEBUG-FONT] Failed to parse CMap for %s: %v\n", name, err)
+					}
+				}
+			}
+			
 			p.fonts[name] = fontInfo
+			// fmt.Printf("[DEBUG-FONT] Added font %s: %+v\n", name, fontInfo)
 		}
 	}
 }
@@ -426,8 +507,10 @@ func (p *ContentStreamParser) processOperator(operator string, operands []string
 	switch operator {
 	// Text object operators
 	case "BT":
+		// fmt.Println("[DEBUG-TEXT] BT (begin text) operator found")
 		p.beginText()
 	case "ET":
+		// fmt.Println("[DEBUG-TEXT] ET (end text) operator found")
 		p.endText()
 		
 	// Text positioning
@@ -442,8 +525,10 @@ func (p *ContentStreamParser) processOperator(operator string, operands []string
 		
 	// Text showing
 	case "Tj":
+		// fmt.Printf("[DEBUG-TEXT] Tj (show text) operator with operands: %v\n", operands)
 		p.showText(operands)
 	case "TJ":
+		// fmt.Printf("[DEBUG-TEXT] TJ (show text array) operator with operands: %v\n", operands)
 		p.showTextArray(operands)
 	case "'":
 		p.textNextLineShow(operands)
@@ -460,6 +545,7 @@ func (p *ContentStreamParser) processOperator(operator string, operands []string
 	case "TL":
 		p.setTextLeading(operands)
 	case "Tf":
+		// fmt.Printf("[DEBUG-TEXT] Tf (set font) operator with operands: %v\n", operands)
 		p.setFont(operands)
 	case "Tr":
 		p.setTextRenderMode(operands)
@@ -1096,33 +1182,78 @@ func (p *ContentStreamParser) setFillColor(operands []string) {
 // Helper functions
 
 func (p *ContentStreamParser) addTextChars(text string) {
-	if text == "" || p.textState.Font == nil {
+	// fmt.Printf("[DEBUG-TEXT] addTextChars called with text: %q, Font: %v\n", text, p.textState.Font)
+	if text == "" {
+		// fmt.Println("[DEBUG-TEXT] Empty text, skipping")
+		return
+	}
+	if p.textState.Font == nil {
+		// fmt.Println("[DEBUG-TEXT] Font is nil, skipping")
 		return
 	}
 	
-	// Calculate text width (simplified)
-	textWidth := float64(len(text)) * p.textState.FontSize * 0.5
-	
-	// Transform coordinates
-	x, y := p.textMatrix.E, p.textMatrix.F
-	
-	// Create character object
-	char := CharObject{
-		Text:     text,
-		Font:     p.textState.Font.Name,
-		FontSize: p.textState.FontSize,
-		X0:       x,
-		Y0:       y,
-		X1:       x + textWidth,
-		Y1:       y + p.textState.FontSize,
-		Width:    textWidth,
-		Height:   p.textState.FontSize,
+	// Process each character individually for better positioning
+	for _, runeValue := range text {
+		charStr := string(runeValue)
+		
+		// Calculate character width (simplified - should use font metrics)
+		// For now use a better approximation based on character type
+		charWidth := p.getCharWidth(charStr) * p.textState.FontSize
+		
+		// Transform coordinates - apply both text matrix and CTM
+		textX, textY := p.textMatrix.E, p.textMatrix.F
+		
+		// Apply CTM transformation to get actual page coordinates
+		ctm := p.graphicsState.CTM
+		x := ctm.A*textX + ctm.C*textY + ctm.E
+		y := ctm.B*textX + ctm.D*textY + ctm.F
+		
+		// Create character object
+		char := CharObject{
+			Text:     charStr,
+			Font:     p.textState.Font.Name,
+			FontSize: p.textState.FontSize,
+			X0:       x,
+			Y0:       y,
+			X1:       x + charWidth,
+			Y1:       y + p.textState.FontSize,
+			Width:    charWidth,
+			Height:   p.textState.FontSize,
+		}
+		
+		p.objects.Chars = append(p.objects.Chars, char)
+		
+		// Update text matrix for next character
+		// Include character spacing and word spacing if it's a space
+		displacement := charWidth
+		if charStr == " " {
+			displacement += p.textState.WordSpace
+		}
+		displacement += p.textState.CharSpace
+		
+		// Apply horizontal scaling
+		displacement *= p.textState.Scale / 100.0
+		
+		// Update text matrix (move horizontally)
+		p.textMatrix.E += displacement * p.textMatrix.A
+		p.textMatrix.F += displacement * p.textMatrix.B
 	}
-	
-	p.objects.Chars = append(p.objects.Chars, char)
-	
-	// Update text matrix for next character
-	p.textMatrix.E += textWidth
+}
+
+// getCharWidth returns an approximate width factor for a character
+func (p *ContentStreamParser) getCharWidth(char string) float64 {
+	// This is a simplified approximation
+	// In reality, we should use font metrics from the font dictionary
+	switch char {
+	case " ":
+		return 0.25
+	case "i", "l", "I", "!", ".", ",", ";", ":", "'", "\"":
+		return 0.3
+	case "m", "M", "W", "w":
+		return 0.8
+	default:
+		return 0.5
+	}
 }
 
 func (p *ContentStreamParser) createLineFromPath() {
@@ -1249,15 +1380,168 @@ func (p *ContentStreamParser) extractString(str string) string {
 		// String literal
 		str = strings.TrimPrefix(str, "(")
 		str = strings.TrimSuffix(str, ")")
-		// TODO: Handle escape sequences
+		
+		// Handle escape sequences
+		str = p.unescapeString(str)
+		
+		// Apply font encoding if available
+		if p.textState.Font != nil {
+			str = p.decodeString(str)
+		}
+		
 		return str
 	} else if strings.HasPrefix(str, "<") && strings.HasSuffix(str, ">") {
 		// Hex string
 		str = strings.TrimPrefix(str, "<")
 		str = strings.TrimSuffix(str, ">")
-		// TODO: Convert hex to string
-		return str
+		
+		// Convert hex to string
+		decoded := p.decodeHexString(str)
+		
+		// Apply font encoding if available
+		if p.textState.Font != nil {
+			decoded = p.decodeString(decoded)
+		}
+		
+		return decoded
 	}
+	return str
+}
+
+// unescapeString handles PDF escape sequences
+func (p *ContentStreamParser) unescapeString(str string) string {
+	var result strings.Builder
+	for i := 0; i < len(str); i++ {
+		if str[i] == '\\' && i+1 < len(str) {
+			switch str[i+1] {
+			case 'n':
+				result.WriteByte('\n')
+				i++
+			case 'r':
+				result.WriteByte('\r')
+				i++
+			case 't':
+				result.WriteByte('\t')
+				i++
+			case 'b':
+				result.WriteByte('\b')
+				i++
+			case 'f':
+				result.WriteByte('\f')
+				i++
+			case '(':
+				result.WriteByte('(')
+				i++
+			case ')':
+				result.WriteByte(')')
+				i++
+			case '\\':
+				result.WriteByte('\\')
+				i++
+			default:
+				// Check for octal escape sequence
+				if i+3 < len(str) && str[i+1] >= '0' && str[i+1] <= '7' {
+					// Try to parse octal
+					endIdx := i + 4
+					if endIdx > len(str) {
+						endIdx = len(str)
+					}
+					octalStr := str[i+1:endIdx]
+					if val, err := strconv.ParseInt(octalStr, 8, 16); err == nil {
+						result.WriteByte(byte(val))
+						i += len(octalStr)
+					} else {
+						result.WriteByte(str[i])
+					}
+				} else {
+					result.WriteByte(str[i])
+				}
+			}
+		} else {
+			result.WriteByte(str[i])
+		}
+	}
+	return result.String()
+}
+
+// decodeHexString converts hex string to bytes
+func (p *ContentStreamParser) decodeHexString(hexStr string) string {
+	var result strings.Builder
+	for i := 0; i < len(hexStr); i += 2 {
+		if i+1 < len(hexStr) {
+			if val, err := strconv.ParseInt(hexStr[i:i+2], 16, 16); err == nil {
+				result.WriteByte(byte(val))
+			}
+		} else {
+			// Handle odd number of hex digits
+			if val, err := strconv.ParseInt(hexStr[i:i+1]+"0", 16, 16); err == nil {
+				result.WriteByte(byte(val))
+			}
+		}
+	}
+	return result.String()
+}
+
+// decodeString applies font encoding to decode the string
+func (p *ContentStreamParser) decodeString(str string) string {
+	// Check if we have a font with ToUnicode CMap
+	if p.textState.Font != nil && p.textState.Font.ToUnicodeCMap != nil {
+		// Convert string to bytes for CID extraction
+		// Assuming the string is already in binary form (from hex or literal)
+		// We need to process it as 2-byte CIDs
+		
+		var result strings.Builder
+		data := []byte(str)
+		
+		// Process based on encoding type
+		if p.textState.Font.Encoding == "Identity-H" || p.textState.Font.Encoding == "Identity-V" {
+			// Identity encoding - 2-byte CIDs
+			for i := 0; i < len(data); i += 2 {
+				if i+1 >= len(data) {
+					// Odd byte at the end
+					cid := uint16(data[i])
+					if unicode, ok := p.textState.Font.ToUnicodeCMap.MapCIDToUnicode(cid); ok {
+						result.WriteString(unicode)
+					} else {
+						result.WriteByte(data[i])
+					}
+				} else {
+					// Extract 2-byte CID
+					cid := uint16(data[i])<<8 | uint16(data[i+1])
+					
+					if unicode, ok := p.textState.Font.ToUnicodeCMap.MapCIDToUnicode(cid); ok {
+						result.WriteString(unicode)
+					} else {
+						// Try single-byte CIDs as fallback
+						if unicode1, ok := p.textState.Font.ToUnicodeCMap.MapCIDToUnicode(uint16(data[i])); ok {
+							result.WriteString(unicode1)
+						} else {
+							result.WriteByte(data[i])
+						}
+						if unicode2, ok := p.textState.Font.ToUnicodeCMap.MapCIDToUnicode(uint16(data[i+1])); ok {
+							result.WriteString(unicode2)
+						} else {
+							result.WriteByte(data[i+1])
+						}
+					}
+				}
+			}
+			return result.String()
+		} else {
+			// Other encodings - try single-byte CIDs
+			for _, b := range data {
+				cid := uint16(b)
+				if unicode, ok := p.textState.Font.ToUnicodeCMap.MapCIDToUnicode(cid); ok {
+					result.WriteString(unicode)
+				} else {
+					result.WriteByte(b)
+				}
+			}
+			return result.String()
+		}
+	}
+	
+	// No ToUnicode CMap, return as-is
 	return str
 }
 
@@ -1265,12 +1549,14 @@ func (p *ContentStreamParser) parseTextArray(arrayStr string) []string {
 	var elements []string
 	var current strings.Builder
 	inString := false
+	inHexString := false
 	parenDepth := 0
 	
 	for i := 0; i < len(arrayStr); i++ {
 		ch := arrayStr[i]
 		
-		if !inString && isWhitespace(ch) {
+		// Handle whitespace when not in string
+		if !inString && !inHexString && isWhitespace(ch) {
 			if current.Len() > 0 {
 				elements = append(elements, current.String())
 				current.Reset()
@@ -1278,30 +1564,54 @@ func (p *ContentStreamParser) parseTextArray(arrayStr string) []string {
 			continue
 		}
 		
-		if ch == '(' {
+		if ch == '(' && !inHexString {
 			if !inString {
 				inString = true
 				parenDepth = 1
+				current.WriteByte(ch)
 			} else {
-				parenDepth++
+				// Check if escaped
+				if i > 0 && arrayStr[i-1] == '\\' {
+					// Already added the backslash, just add paren
+					current.WriteByte(ch)
+				} else {
+					parenDepth++
+					current.WriteByte(ch)
+				}
 			}
-			current.WriteByte(ch)
-		} else if ch == ')' && inString {
-			parenDepth--
-			current.WriteByte(ch)
-			if parenDepth == 0 {
-				inString = false
-				elements = append(elements, current.String())
-				current.Reset()
+		} else if ch == ')' && inString && !inHexString {
+			// Check if escaped
+			if i > 0 && arrayStr[i-1] == '\\' {
+				current.WriteByte(ch)
+			} else {
+				parenDepth--
+				current.WriteByte(ch)
+				if parenDepth == 0 {
+					inString = false
+					elements = append(elements, current.String())
+					current.Reset()
+				}
 			}
 		} else if ch == '<' && !inString {
-			// Start of hex string
-			start := i
-			for i < len(arrayStr) && arrayStr[i] != '>' {
-				i++
+			if !inHexString {
+				inHexString = true
+				current.WriteByte(ch)
 			}
-			if i < len(arrayStr) {
-				elements = append(elements, arrayStr[start:i+1])
+		} else if ch == '>' && inHexString {
+			current.WriteByte(ch)
+			inHexString = false
+			elements = append(elements, current.String())
+			current.Reset()
+		} else if ch == '-' && !inString && !inHexString {
+			// Check if it's the start of a negative number
+			if i+1 < len(arrayStr) && (arrayStr[i+1] >= '0' && arrayStr[i+1] <= '9' || arrayStr[i+1] == '.') {
+				current.WriteByte(ch)
+			} else {
+				// It's just a minus sign, treat as separator
+				if current.Len() > 0 {
+					elements = append(elements, current.String())
+					current.Reset()
+				}
 			}
 		} else {
 			current.WriteByte(ch)

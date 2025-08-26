@@ -82,46 +82,100 @@ func (p *PDFCPUPage) extractContent() error {
 		return nil // No content
 	}
 
+	// fmt.Printf("[DEBUG] Contents type: %T\n", contents)
+
 	var contentStreams [][]byte
 
-	// Handle different content types
+	// Handle different content types - also check for value types
 	switch v := contents.(type) {
 	case *types.IndirectRef:
+		// fmt.Println("[DEBUG] Case: *types.IndirectRef (pointer)")
 		// Single content stream
-		obj, err := p.ctx.Dereference(v)
+		stream, found, err := p.ctx.DereferenceStreamDict(*v)
 		if err != nil {
 			return fmt.Errorf("failed to dereference content: %w", err)
 		}
-		if stream, ok := obj.(*types.StreamDict); ok {
+		if found && stream != nil {
+			// fmt.Println("[DEBUG] Successfully got StreamDict via DereferenceStreamDict")
 			decoded, err := decodeStream(stream)
 			if err != nil {
 				return fmt.Errorf("failed to decode stream: %w", err)
 			}
+			// fmt.Printf("[DEBUG] Decoded %d bytes\n", len(decoded))
 			contentStreams = append(contentStreams, decoded)
+		} else {
+			// fmt.Println("[DEBUG] StreamDict not found")
+		}
+		
+	case types.IndirectRef:
+		// fmt.Println("[DEBUG] Case: types.IndirectRef (value)")
+		// Single content stream (value type) - use DereferenceStreamDict
+		streamDict, _, err := p.ctx.DereferenceStreamDict(v)
+		if err != nil {
+			return fmt.Errorf("failed to dereference stream: %w", err)
+		}
+		// fmt.Printf("[DEBUG] DereferenceStreamDict: found=%v, streamDict=%p\n", found, streamDict)
+		
+		if streamDict != nil {
+			// Decode the stream
+			if err := streamDict.Decode(); err != nil {
+				return fmt.Errorf("failed to decode stream: %w", err)
+			}
+			// fmt.Printf("[DEBUG] Decoded %d bytes\n", len(streamDict.Content))
+			contentStreams = append(contentStreams, streamDict.Content)
 		}
 
 	case types.Array:
+		// fmt.Printf("[DEBUG] Case: types.Array with %d elements\n", len(v))
 		// Multiple content streams
 		for _, item := range v {
+			// fmt.Printf("[DEBUG] Array element %d type: %T\n", i, item)
+			
+			// Try pointer type first
 			if indRef, ok := item.(*types.IndirectRef); ok {
-				obj, err := p.ctx.Dereference(indRef)
+				// fmt.Printf("[DEBUG]   Element %d is *types.IndirectRef\n", i)
+				streamDict, _, err := p.ctx.DereferenceStreamDict(*indRef)
 				if err != nil {
+					// fmt.Printf("[DEBUG]   Failed to dereference stream: %v\n", err)
 					continue
 				}
-				if stream, ok := obj.(*types.StreamDict); ok {
-					decoded, err := decodeStream(stream)
-					if err != nil {
+				// fmt.Printf("[DEBUG]   DereferenceStreamDict: found=%v\n", found)
+				if streamDict != nil {
+					if err := streamDict.Decode(); err != nil {
+						// fmt.Printf("[DEBUG]   Failed to decode: %v\n", err)
 						continue
 					}
-					contentStreams = append(contentStreams, decoded)
+					// fmt.Printf("[DEBUG]   Decoded %d bytes\n", len(streamDict.Content))
+					contentStreams = append(contentStreams, streamDict.Content)
+				}
+			} else if indRef, ok := item.(types.IndirectRef); ok {
+				// Try value type
+				// fmt.Printf("[DEBUG]   Element %d is types.IndirectRef (value)\n", i)
+				streamDict, _, err := p.ctx.DereferenceStreamDict(indRef)
+				if err != nil {
+					// fmt.Printf("[DEBUG]   Failed to dereference stream: %v\n", err)
+					continue
+				}
+				// fmt.Printf("[DEBUG]   DereferenceStreamDict: found=%v\n", found)
+				if streamDict != nil {
+					if err := streamDict.Decode(); err != nil {
+						// fmt.Printf("[DEBUG]   Failed to decode: %v\n", err)
+						continue
+					}
+					// fmt.Printf("[DEBUG]   Decoded %d bytes\n", len(streamDict.Content))
+					contentStreams = append(contentStreams, streamDict.Content)
 				}
 			}
 		}
 	}
 
 	// Combine all content streams
+	// fmt.Printf("[DEBUG] Total content streams collected: %d\n", len(contentStreams))
 	if len(contentStreams) > 0 {
 		p.content = combineContentStreams(contentStreams)
+		// fmt.Printf("[DEBUG] Combined content size: %d bytes\n", len(p.content))
+	} else {
+		// fmt.Println("[DEBUG] No content streams were extracted!")
 	}
 
 	return nil
@@ -185,9 +239,13 @@ func (p *PDFCPUPage) GetBBox() BoundingBox {
 // GetObjects returns all objects on the page
 func (p *PDFCPUPage) GetObjects() Objects {
 	// Parse content stream if not already done
-	if len(p.objects.Chars) == 0 && len(p.content) > 0 {
+	// Check if we have parsed content by checking if we have any objects at all
+	if len(p.objects.Chars) == 0 && len(p.objects.Lines) == 0 && len(p.objects.Rects) == 0 && len(p.content) > 0 {
+		// fmt.Println("[DEBUG] Parsing content stream...")
 		parser := NewContentStreamParser(p.ctx, p.pageDict)
 		p.objects = parser.Parse(p.content)
+		// fmt.Printf("[DEBUG] After parsing: %d chars, %d lines, %d rects\n", 
+		//	len(p.objects.Chars), len(p.objects.Lines), len(p.objects.Rects))
 	}
 	return p.objects
 }
@@ -291,8 +349,103 @@ func sortCharsByPosition(chars []CharObject) {
 
 // ExtractWords extracts individual words from the page
 func (p *PDFCPUPage) ExtractWords(opts ...WordExtractionOption) []Word {
-	// TODO: Implement word extraction
-	return []Word{}
+	// Default configuration
+	config := &wordExtractionConfig{
+		XTolerance: 3.0,
+		YTolerance: 3.0,
+	}
+	
+	// Apply options
+	for _, opt := range opts {
+		opt(config)
+	}
+	
+	// Get all character objects
+	objects := p.GetObjects()
+	if len(objects.Chars) == 0 {
+		return []Word{}
+	}
+	
+	// Sort characters by position (Y first, then X)
+	chars := make([]CharObject, len(objects.Chars))
+	copy(chars, objects.Chars)
+	sortCharsByPosition(chars)
+	
+	// Group characters into words
+	var words []Word
+	var currentWord []CharObject
+	var lastChar *CharObject
+	
+	for i := range chars {
+		char := &chars[i]
+		
+		// Check if this character belongs to the current word
+		if lastChar != nil {
+			// Different line?
+			if abs(char.Y0-lastChar.Y0) > config.YTolerance {
+				// Save current word and start new one
+				if len(currentWord) > 0 {
+					words = append(words, createWord(currentWord))
+					currentWord = []CharObject{}
+				}
+			} else if char.X0-lastChar.X1 > config.XTolerance {
+				// Too far horizontally - new word
+				if len(currentWord) > 0 {
+					words = append(words, createWord(currentWord))
+					currentWord = []CharObject{}
+				}
+			}
+		}
+		
+		currentWord = append(currentWord, *char)
+		lastChar = char
+	}
+	
+	// Add last word
+	if len(currentWord) > 0 {
+		words = append(words, createWord(currentWord))
+	}
+	
+	return words
+}
+
+// createWord creates a Word from a group of characters
+func createWord(chars []CharObject) Word {
+	if len(chars) == 0 {
+		return Word{}
+	}
+	
+	// Calculate bounding box
+	minX := chars[0].X0
+	minY := chars[0].Y0
+	maxX := chars[0].X1
+	maxY := chars[0].Y1
+	
+	text := ""
+	for _, char := range chars {
+		text += char.Text
+		if char.X0 < minX {
+			minX = char.X0
+		}
+		if char.Y0 < minY {
+			minY = char.Y0
+		}
+		if char.X1 > maxX {
+			maxX = char.X1
+		}
+		if char.Y1 > maxY {
+			maxY = char.Y1
+		}
+	}
+	
+	return Word{
+		Text:       text,
+		X0:         minX,
+		Y0:         minY,
+		X1:         maxX,
+		Y1:         maxY,
+		Characters: chars,
+	}
 }
 
 // ExtractTables extracts tables from the page
