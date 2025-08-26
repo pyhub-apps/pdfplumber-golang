@@ -58,21 +58,21 @@ func (cmap *ToUnicodeCMap) Parse(data []byte) error {
 // parseBeginBFChar parses beginbfchar...endbfchar sections
 func (cmap *ToUnicodeCMap) parseBeginBFChar(content string) error {
 	// Regular expression to find beginbfchar sections
-	// Format: N beginbfchar
+	// Format: [N] beginbfchar
 	//         <src> <dst>
 	//         ...
 	//         endbfchar
-	re := regexp.MustCompile(`(\d+)\s+beginbfchar\s*((?:<[0-9A-Fa-f]+>\s*<[0-9A-Fa-f]+>\s*)+)endbfchar`)
+	re := regexp.MustCompile(`(?:\d+\s+)?beginbfchar\s*((?:<[0-9A-Fa-f]+>\s*<[0-9A-Fa-f]+>\s*)+)endbfchar`)
 	
 	matches := re.FindAllStringSubmatch(content, -1)
 	
 	for _, match := range matches {
-		if len(match) < 3 {
+		if len(match) < 2 {
 			continue
 		}
 		
 		// Parse each mapping
-		mappingStr := match[2]
+		mappingStr := match[1]
 		mappingRe := regexp.MustCompile(`<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>`)
 		mappings := mappingRe.FindAllStringSubmatch(mappingStr, -1)
 		
@@ -117,21 +117,21 @@ func (cmap *ToUnicodeCMap) parseBeginBFChar(content string) error {
 // parseBeginBFRange parses beginbfrange...endbfrange sections
 func (cmap *ToUnicodeCMap) parseBeginBFRange(content string) error {
 	// Regular expression to find beginbfrange sections
-	// Format: N beginbfrange
+	// Format: [N] beginbfrange
 	//         <srcStart> <srcEnd> <dst>
 	//         ...
 	//         endbfrange
-	re := regexp.MustCompile(`(\d+)\s+beginbfrange\s*((?:<[0-9A-Fa-f]+>\s*<[0-9A-Fa-f]+>\s*(?:<[0-9A-Fa-f]+>|\[[^\]]+\])\s*)+)endbfrange`)
+	re := regexp.MustCompile(`(?:\d+\s+)?beginbfrange\s*((?:<[0-9A-Fa-f]+>\s*<[0-9A-Fa-f]+>\s*(?:<[0-9A-Fa-f]+>|\[[^\]]+\])\s*)+)endbfrange`)
 	
 	matches := re.FindAllStringSubmatch(content, -1)
 	
 	for _, match := range matches {
-		if len(match) < 3 {
+		if len(match) < 2 {
 			continue
 		}
 		
 		// Parse each range
-		rangeStr := match[2]
+		rangeStr := match[1]
 		// Handle both single Unicode values and arrays
 		rangeRe := regexp.MustCompile(`<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<[0-9A-Fa-f]+>|\[([^\]]+)\])`)
 		ranges := rangeRe.FindAllStringSubmatch(rangeStr, -1)
@@ -260,17 +260,8 @@ func (cmap *ToUnicodeCMap) MapCIDToUnicode(cid uint16) (string, bool) {
 	return "", false
 }
 
-// DecodeHexString decodes a hex string using this CMap
-func (cmap *ToUnicodeCMap) DecodeHexString(hexStr string) string {
-	// Remove angle brackets if present
-	hexStr = strings.Trim(hexStr, "<>")
-	
-	// Decode hex to bytes
-	data, err := hex.DecodeString(hexStr)
-	if err != nil {
-		return ""
-	}
-	
+// Decode decodes raw bytes using this CMap
+func (cmap *ToUnicodeCMap) Decode(data []byte) string {
 	var result strings.Builder
 	
 	// Process 2 bytes at a time (assuming 2-byte CIDs)
@@ -307,6 +298,20 @@ func (cmap *ToUnicodeCMap) DecodeHexString(hexStr string) string {
 	}
 	
 	return result.String()
+}
+
+// DecodeHexString decodes a hex string using this CMap
+func (cmap *ToUnicodeCMap) DecodeHexString(hexStr string) string {
+	// Remove angle brackets if present
+	hexStr = strings.Trim(hexStr, "<>")
+	
+	// Decode hex to bytes
+	data, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return ""
+	}
+	
+	return cmap.Decode(data)
 }
 
 // GetMappingCount returns the total number of mappings in this CMap

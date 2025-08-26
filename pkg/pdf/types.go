@@ -147,6 +147,8 @@ type RectObject struct {
 	StrokeColor Color
 	FillColor   Color
 	NonStroking bool
+	Filled      bool
+	Stroked     bool
 }
 
 // GetType returns the object type
